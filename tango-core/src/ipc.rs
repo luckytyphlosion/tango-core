@@ -1,4 +1,19 @@
-use crate::game;
+use bincode::Options;
+use byteorder::{ReadBytesExt, WriteBytesExt};
+
+use crate::{game, protocol};
+
+lazy_static! {
+    static ref BINCODE_OPTIONS: bincode::config::WithOtherLimit<
+        bincode::config::WithOtherIntEncoding<
+            bincode::config::DefaultOptions,
+            bincode::config::FixintEncoding,
+        >,
+        bincode::config::Bounded,
+    > = bincode::DefaultOptions::new()
+        .with_fixint_encoding()
+        .with_limit(1024 * 1024);
+}
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, typescript_type_def::TypeDef)]
 pub struct Args {
@@ -11,13 +26,10 @@ pub struct Args {
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, typescript_type_def::TypeDef)]
 pub struct MatchSettings {
-    pub session_id: String,
+    pub rng_seed: [u8; 16],
     pub input_delay: u32,
+    pub is_polite: bool,
     pub match_type: u16,
-    pub replays_path: String,
-    pub replay_metadata: String,
-    pub matchmaking_connect_addr: String,
-    pub ice_servers: Vec<String>,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, typescript_type_def::TypeDef)]
@@ -59,38 +71,54 @@ impl Args {
     }
 }
 
-#[derive(Debug, serde::Serialize, serde::Deserialize, typescript_type_def::TypeDef)]
-pub enum Notification {
-    State(State),
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub enum Incoming {
+    Protocol(protocol::Packet),
 }
 
-#[derive(Debug, serde::Serialize, serde::Deserialize, typescript_type_def::TypeDef)]
-pub enum State {
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub enum Outgoing {
     Running,
-    Waiting,
-    Connecting,
-    Done,
+    MatchEnd,
+    BattleStart { battle_number: u8 },
+    LocalState { state: Vec<u8> },
+    BattleEnd { battle_number: u8 },
+    Protocol(protocol::Packet),
 }
 
 #[derive(Clone)]
 pub struct Client(std::sync::Arc<parking_lot::Mutex<Inner>>);
 
 struct Inner {
-    writer: Box<dyn std::io::Write>,
+    writer: Box<dyn std::io::Write + Send>,
+    reader: Box<dyn std::io::Read + Send>,
 }
 
 impl Client {
     pub fn new_from_stdout() -> Self {
         Client(std::sync::Arc::new(parking_lot::Mutex::new(Inner {
             writer: Box::new(std::io::stdout()),
+            reader: Box::new(std::io::stdin()),
         })))
     }
 
-    pub fn send_notification(&self, n: Notification) -> std::io::Result<()> {
+    pub fn send(&self, req: Outgoing) -> anyhow::Result<()> {
         let mut inner = self.0.lock();
-        serde_json::to_writer(&mut inner.writer, &n)?;
-        inner.writer.write_all(b"\n")?;
+        let buf = BINCODE_OPTIONS.serialize(&req)?;
+        inner
+            .writer
+            .write_u32::<byteorder::LittleEndian>(buf.len() as u32)?;
+        inner.writer.write_all(&buf)?;
         inner.writer.flush()?;
         Ok(())
+    }
+
+    pub fn receive(&self) -> anyhow::Result<Incoming> {
+        let mut inner = self.0.lock();
+        let size = inner.reader.read_u32::<byteorder::LittleEndian>()? as usize;
+        let mut buf = vec![0u8; size];
+        inner.reader.read_exact(&mut buf)?;
+        let resp = BINCODE_OPTIONS.deserialize(&buf)?;
+        Ok(resp)
     }
 }

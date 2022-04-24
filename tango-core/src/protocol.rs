@@ -11,14 +11,13 @@ lazy_static! {
         bincode::config::Bounded,
     > = bincode::DefaultOptions::new()
         .with_fixint_encoding()
-        .with_limit(128 * 1024);
+        .with_limit(1024 * 1024);
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub enum Packet {
-    Hello(Hello),
-    Hola(Hola),
     Init(Init),
+    State(State),
     Input(Input),
 }
 
@@ -33,21 +32,15 @@ impl Packet {
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
-pub struct Hello {
-    pub protocol_version: u8,
-    pub rng_commitment: Vec<u8>,
-}
-
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
-pub struct Hola {
-    pub rng_nonce: Vec<u8>,
-}
-
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct Init {
     pub battle_number: u8,
     pub input_delay: u32,
     pub marshaled: Vec<u8>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+pub struct State {
+    pub state: Vec<u8>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]

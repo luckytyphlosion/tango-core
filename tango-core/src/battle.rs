@@ -1,26 +1,14 @@
 use rand::Rng;
+use rand::SeedableRng;
 
 use crate::audio;
-use crate::datachannel;
 use crate::facade;
 use crate::fastforwarder;
 use crate::game;
 use crate::hooks;
 use crate::input;
+use crate::ipc;
 use crate::protocol;
-use crate::replay;
-use crate::transport;
-
-#[derive(Clone, Debug)]
-pub struct Settings {
-    pub ice_servers: Vec<webrtc::ice_transport::ice_server::RTCIceServer>,
-    pub matchmaking_connect_addr: String,
-    pub session_id: String,
-    pub replays_path: std::path::PathBuf,
-    pub replay_metadata: Vec<u8>,
-    pub match_type: u16,
-    pub input_delay: u32,
-}
 
 pub struct BattleState {
     pub number: u8,
@@ -32,9 +20,9 @@ pub struct Match {
     audio_supported_config: cpal::SupportedStreamConfig,
     rom_path: std::path::PathBuf,
     hooks: &'static Box<dyn hooks::Hooks + Send + Sync>,
-    dc: std::sync::Arc<datachannel::DataChannel>,
+    ipc_client: ipc::Client,
     rng: tokio::sync::Mutex<rand_pcg::Mcg128Xsl64>,
-    settings: Settings,
+    settings: ipc::MatchSettings,
     battle_state: tokio::sync::Mutex<BattleState>,
     remote_init_sender: tokio::sync::mpsc::Sender<protocol::Init>,
     remote_init_receiver: tokio::sync::Mutex<tokio::sync::mpsc::Receiver<protocol::Init>>,
@@ -57,12 +45,6 @@ pub enum NegotiationError {
 impl From<anyhow::Error> for NegotiationError {
     fn from(err: anyhow::Error) -> Self {
         NegotiationError::Other(err)
-    }
-}
-
-impl From<webrtc::Error> for NegotiationError {
-    fn from(err: webrtc::Error) -> Self {
-        NegotiationError::Other(err.into())
     }
 }
 
@@ -117,26 +99,25 @@ impl Match {
         rom_path: std::path::PathBuf,
         hooks: &'static Box<dyn hooks::Hooks + Send + Sync>,
         audio_mux: audio::mux_stream::MuxStream,
-        dc: std::sync::Arc<datachannel::DataChannel>,
-        mut rng: rand_pcg::Mcg128Xsl64,
-        side: tango_matchmaking::client::ConnectionSide,
+        ipc_client: ipc::Client,
         primary_thread_handle: mgba::thread::Handle,
-        settings: Settings,
+        settings: ipc::MatchSettings,
     ) -> Self {
+        let is_polite = settings.is_polite;
+        let mut rng = rand_pcg::Mcg128Xsl64::from_seed(settings.rng_seed);
         let (remote_init_sender, remote_init_receiver) = tokio::sync::mpsc::channel(1);
         let did_polite_win_last_battle = rng.gen::<bool>();
         Self {
             audio_supported_config,
             rom_path,
             hooks,
-            dc,
+            ipc_client,
             rng: tokio::sync::Mutex::new(rng),
             settings,
             battle_state: tokio::sync::Mutex::new(BattleState {
                 number: 0,
                 battle: None,
-                won_last_battle: did_polite_win_last_battle
-                    == (side == tango_matchmaking::client::ConnectionSide::Polite),
+                won_last_battle: did_polite_win_last_battle == is_polite,
             }),
             remote_init_sender,
             remote_init_receiver: tokio::sync::Mutex::new(remote_init_receiver),
@@ -147,24 +128,35 @@ impl Match {
 
     pub async fn run(&self) -> anyhow::Result<()> {
         loop {
-            match protocol::Packet::deserialize(
-                match self.dc.receive().await {
-                    None => break,
-                    Some(buf) => buf,
-                }
-                .as_slice(),
-            )? {
-                protocol::Packet::Init(init) => {
-                    self.remote_init_sender.send(init).await?;
-                }
-                protocol::Packet::Input(input) => {
-                    let state_committed_rx = {
-                        let mut battle_state = self.battle_state.lock().await;
+            match self.ipc_client.receive()? {
+                ipc::Incoming::Protocol(p) => match p {
+                    protocol::Packet::Init(init) => {
+                        self.remote_init_sender.send(init).await?;
+                    }
+                    protocol::Packet::Input(input) => {
+                        let state_committed_rx = {
+                            let mut battle_state = self.battle_state.lock().await;
 
-                        if input.battle_number != battle_state.number {
-                            log::info!("battle number mismatch, dropping input");
-                            continue;
+                            if input.battle_number != battle_state.number {
+                                log::info!("battle number mismatch, dropping input");
+                                continue;
+                            }
+
+                            let battle = match &mut battle_state.battle {
+                                None => {
+                                    log::info!("no battle in progress, dropping input");
+                                    continue;
+                                }
+                                Some(b) => b,
+                            };
+                            battle.state_committed_rx.take()
+                        };
+
+                        if let Some(state_committed_rx) = state_committed_rx {
+                            state_committed_rx.await.unwrap();
                         }
+
+                        let mut battle_state = self.battle_state.lock().await;
 
                         let battle = match &mut battle_state.battle {
                             None => {
@@ -173,40 +165,23 @@ impl Match {
                             }
                             Some(b) => b,
                         };
-                        battle.state_committed_rx.take()
-                    };
 
-                    if let Some(state_committed_rx) = state_committed_rx {
-                        state_committed_rx.await.unwrap();
-                    }
-
-                    let mut battle_state = self.battle_state.lock().await;
-
-                    let battle = match &mut battle_state.battle {
-                        None => {
-                            log::info!("no battle in progress, dropping input");
-                            continue;
+                        if !battle.can_add_remote_input() {
+                            anyhow::bail!("remote overflowed our input buffer");
                         }
-                        Some(b) => b,
-                    };
 
-                    if !battle.can_add_remote_input() {
-                        anyhow::bail!("remote overflowed our input buffer");
+                        battle.add_remote_input(input::Input {
+                            local_tick: input.local_tick,
+                            remote_tick: input.remote_tick,
+                            joyflags: input.joyflags as u16,
+                            custom_screen_state: input.custom_screen_state as u8,
+                            turn: input.turn,
+                        });
                     }
-
-                    battle.add_remote_input(input::Input {
-                        local_tick: input.local_tick,
-                        remote_tick: input.remote_tick,
-                        joyflags: input.joyflags as u16,
-                        custom_screen_state: input.custom_screen_state as u8,
-                        turn: input.turn,
-                    });
-                }
-                p => anyhow::bail!("unknown packet: {:?}", p),
+                    p => anyhow::bail!("unknown packet: {:?}", p),
+                },
             }
         }
-
-        Ok(())
     }
 
     pub async fn lock_battle_state(&self) -> tokio::sync::MutexGuard<'_, BattleState> {
@@ -218,8 +193,8 @@ impl Match {
         remote_init_receiver.recv().await
     }
 
-    pub fn transport(&self) -> anyhow::Result<transport::Transport> {
-        Ok(transport::Transport::new(self.dc.clone()))
+    pub fn ipc_client(&self) -> &ipc::Client {
+        &self.ipc_client
     }
 
     pub async fn lock_rng(&self) -> tokio::sync::MutexGuard<'_, rand_pcg::Mcg128Xsl64> {
@@ -238,11 +213,6 @@ impl Match {
             "starting battle: local_player_index = {}",
             local_player_index
         );
-        let mut replay_filename = self.settings.replays_path.clone();
-        replay_filename.push(format!("battle{}.tangoreplay", battle_state.number));
-        let replay_filename = std::path::Path::new(&replay_filename);
-        let replay_file = std::fs::File::create(&replay_filename)?;
-        log::info!("opened replay: {}", replay_filename.display());
 
         let mut audio_core = mgba::core::Core::new_gba("tango")?;
         let audio_save_state_holder = std::sync::Arc::new(parking_lot::Mutex::new(None));
@@ -302,11 +272,6 @@ impl Match {
             audio_rendezvous_tx,
             committed_state: None,
             local_pending_turn: None,
-            replay_writer: replay::Writer::new(
-                Box::new(replay_file),
-                &self.settings.replay_metadata,
-                local_player_index,
-            )?,
             fastforwarder: fastforwarder::Fastforwarder::new(
                 &self.rom_path,
                 self.hooks,
@@ -343,7 +308,6 @@ pub struct Battle {
     audio_rendezvous_tx: std::sync::mpsc::SyncSender<()>,
     committed_state: Option<mgba::state::State>,
     local_pending_turn: Option<LocalPendingTurn>,
-    replay_writer: replay::Writer,
     fastforwarder: fastforwarder::Fastforwarder,
     audio_save_state_holder: std::sync::Arc<parking_lot::Mutex<Option<mgba::state::State>>>,
     primary_thread_handle: mgba::thread::Handle,
@@ -354,10 +318,6 @@ pub struct Battle {
 impl Battle {
     pub fn fastforwarder(&mut self) -> &mut fastforwarder::Fastforwarder {
         &mut self.fastforwarder
-    }
-
-    pub fn replay_writer(&mut self) -> &mut replay::Writer {
-        &mut self.replay_writer
     }
 
     pub fn local_player_index(&self) -> u8 {

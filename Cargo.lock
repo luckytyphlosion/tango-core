@@ -3265,7 +3265,6 @@ dependencies = [
  "tokio-util",
  "typescript-type-def",
  "url",
- "webrtc",
  "wgpu",
  "winit",
  "winres",

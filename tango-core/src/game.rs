@@ -1,4 +1,4 @@
-use crate::{audio, battle, current_input, facade, hooks, ipc, negotiation, tps};
+use crate::{audio, battle, current_input, facade, hooks, ipc, tps};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use parking_lot::Mutex;
 use std::sync::Arc;
@@ -39,12 +39,12 @@ pub struct Game {
 
 impl Game {
     pub fn new(
-        mut ipc_client: ipc::Client,
+        ipc_client: ipc::Client,
         window_title: String,
         keymapping: Keymapping,
         rom_path: std::path::PathBuf,
         save_path: std::path::PathBuf,
-        match_settings: Option<battle::Settings>,
+        match_settings: Option<ipc::MatchSettings>,
     ) -> Result<Game, anyhow::Error> {
         log::info!(
             "wgpu adapters: {:?}",
@@ -149,17 +149,6 @@ impl Game {
             ));
 
         if let Some(match_settings) = match_settings {
-            let _ = std::fs::create_dir_all(&match_settings.replays_path);
-            let negotiation = handle.block_on(async {
-                negotiation::negotiate(
-                    &mut ipc_client,
-                    &match_settings.session_id,
-                    &match_settings.matchmaking_connect_addr,
-                    &match_settings.ice_servers,
-                )
-                .await
-            })?;
-
             let match_ = match_.clone();
             handle.block_on(async {
                 *match_.lock().await = Some(std::sync::Arc::new(battle::Match::new(
@@ -167,9 +156,7 @@ impl Game {
                     rom_path.clone(),
                     hooks,
                     audio_mux.clone(),
-                    negotiation.dc,
-                    negotiation.rng,
-                    negotiation.side,
+                    ipc_client.clone(),
                     thread.handle(),
                     match_settings,
                 )));
@@ -240,10 +227,10 @@ impl Game {
     }
 
     pub fn run(mut self) -> anyhow::Result<()> {
-        self.ipc_client
-            .send_notification(ipc::Notification::State(ipc::State::Running))?;
-
         let current_input = self.current_input.clone();
+        self.ipc_client
+            .send(ipc::Outgoing::Running)
+            .expect("send notification");
 
         self.event_loop
             .take()
