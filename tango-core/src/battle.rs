@@ -128,7 +128,7 @@ impl Match {
 
     pub async fn run(&self) -> anyhow::Result<()> {
         loop {
-            match self.ipc_client.receive()? {
+            match self.ipc_client.receive().await? {
                 ipc::Incoming::Protocol(p) => match p {
                     protocol::Packet::Init(init) => {
                         self.remote_init_sender.send(init).await?;
@@ -282,6 +282,14 @@ impl Match {
             _audio_core_mux_handle: audio_core_mux_handle,
             primary_thread_handle: self.primary_thread_handle.clone(),
         });
+
+        self.ipc_client
+            .send(ipc::Outgoing::BattleStart {
+                local_player_index,
+                battle_number: battle_state.number,
+            })
+            .await?;
+
         log::info!("battle has started");
         Ok(())
     }

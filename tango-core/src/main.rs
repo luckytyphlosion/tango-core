@@ -20,7 +20,7 @@ fn main() -> Result<(), anyhow::Error> {
     mgba::log::init();
 
     let g = tango_core::game::Game::new(
-        tango_core::ipc::Client::new_from_stdout(),
+        tango_core::ipc::Client::new_from_stdio(),
         args.window_title,
         args.keymapping.try_into()?,
         args.rom_path.into(),

@@ -1,5 +1,5 @@
 use bincode::Options;
-use byteorder::{ReadBytesExt, WriteBytesExt};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::{game, protocol};
 
@@ -80,44 +80,49 @@ pub enum Incoming {
 pub enum Outgoing {
     Running,
     MatchEnd,
-    BattleStart { battle_number: u8 },
-    LocalState { state: Vec<u8> },
-    BattleEnd { battle_number: u8 },
+    BattleStart {
+        battle_number: u8,
+        local_player_index: u8,
+    },
+    LocalState {
+        state: Vec<u8>,
+    },
+    BattleEnd {
+        battle_number: u8,
+    },
     Protocol(protocol::Packet),
 }
 
 #[derive(Clone)]
-pub struct Client(std::sync::Arc<parking_lot::Mutex<Inner>>);
+pub struct Client(std::sync::Arc<tokio::sync::Mutex<Inner>>);
 
 struct Inner {
-    writer: Box<dyn std::io::Write + Send>,
-    reader: Box<dyn std::io::Read + Send>,
+    writer: std::pin::Pin<Box<dyn tokio::io::AsyncWrite + Send + 'static>>,
+    reader: std::pin::Pin<Box<dyn tokio::io::AsyncRead + Send + 'static>>,
 }
 
 impl Client {
-    pub fn new_from_stdout() -> Self {
-        Client(std::sync::Arc::new(parking_lot::Mutex::new(Inner {
-            writer: Box::new(std::io::stdout()),
-            reader: Box::new(std::io::stdin()),
+    pub fn new_from_stdio() -> Self {
+        Client(std::sync::Arc::new(tokio::sync::Mutex::new(Inner {
+            writer: Box::pin(tokio::io::stdout()),
+            reader: Box::pin(tokio::io::stdin()),
         })))
     }
 
-    pub fn send(&self, req: Outgoing) -> anyhow::Result<()> {
-        let mut inner = self.0.lock();
+    pub async fn send(&self, req: Outgoing) -> anyhow::Result<()> {
+        let mut inner = self.0.lock().await;
         let buf = BINCODE_OPTIONS.serialize(&req)?;
-        inner
-            .writer
-            .write_u32::<byteorder::LittleEndian>(buf.len() as u32)?;
-        inner.writer.write_all(&buf)?;
-        inner.writer.flush()?;
+        inner.writer.write_u32_le(buf.len() as u32).await?;
+        inner.writer.write_all(&buf).await?;
+        inner.writer.flush().await?;
         Ok(())
     }
 
-    pub fn receive(&self) -> anyhow::Result<Incoming> {
-        let mut inner = self.0.lock();
-        let size = inner.reader.read_u32::<byteorder::LittleEndian>()? as usize;
+    pub async fn receive(&self) -> anyhow::Result<Incoming> {
+        let mut inner = self.0.lock().await;
+        let size = inner.reader.read_u32_le().await? as usize;
         let mut buf = vec![0u8; size];
-        inner.reader.read_exact(&mut buf)?;
+        inner.reader.read_exact(&mut buf).await?;
         let resp = BINCODE_OPTIONS.deserialize(&buf)?;
         Ok(resp)
     }

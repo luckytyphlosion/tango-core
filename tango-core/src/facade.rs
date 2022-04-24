@@ -39,7 +39,6 @@ impl<'a> BattleStateFacadeGuard<'a> {
             .as_mut()
             .expect("attempted to get battle information while no battle was active!");
 
-        let local_player_index = battle.local_player_index();
         let local_tick = current_tick + battle.local_delay();
         let remote_tick = battle.last_committed_remote_input().local_tick;
 
@@ -54,19 +53,20 @@ impl<'a> BattleStateFacadeGuard<'a> {
             return false;
         }
 
-        if let Err(e) =
-            self.match_
-                .ipc_client()
-                .send(ipc::Outgoing::Protocol(protocol::Packet::Input(
-                    protocol::Input {
-                        battle_number,
-                        local_tick,
-                        remote_tick,
-                        joyflags,
-                        custom_screen_state,
-                        turn: turn.clone(),
-                    },
-                )))
+        if let Err(e) = self
+            .match_
+            .ipc_client()
+            .send(ipc::Outgoing::Protocol(protocol::Packet::Input(
+                protocol::Input {
+                    battle_number,
+                    local_tick,
+                    remote_tick,
+                    joyflags,
+                    custom_screen_state,
+                    turn: turn.clone(),
+                },
+            )))
+            .await
         {
             log::warn!("failed to send input: {}", e);
             return false;
@@ -124,7 +124,7 @@ impl<'a> BattleStateFacadeGuard<'a> {
         true
     }
 
-    pub fn set_committed_state(&mut self, state: mgba::state::State) {
+    pub async fn set_committed_state(&mut self, state: mgba::state::State) {
         let battle = self
             .guard
             .battle
@@ -136,6 +136,7 @@ impl<'a> BattleStateFacadeGuard<'a> {
                 .send(ipc::Outgoing::LocalState {
                     state: state.as_slice().to_vec(),
                 })
+                .await
                 .expect("send state");
         }
         battle.set_committed_state(state);
@@ -184,6 +185,7 @@ impl<'a> BattleStateFacadeGuard<'a> {
                     marshaled: init.to_vec(),
                 },
             )))
+            .await
             .expect("send init");
         log::info!("sent local init: {:?}", init);
     }
@@ -281,12 +283,6 @@ impl MatchFacade {
     }
 
     pub async fn start_battle(&self, core: mgba::core::CoreMutRef<'_>) {
-        self.arc
-            .ipc_client()
-            .send(ipc::Outgoing::BattleStart {
-                battle_number: self.arc.lock_battle_state().await.number,
-            })
-            .expect("ipc send");
         self.arc.start_battle(core).await.expect("start battle");
     }
 
@@ -296,6 +292,7 @@ impl MatchFacade {
             .send(ipc::Outgoing::BattleEnd {
                 battle_number: self.arc.lock_battle_state().await.number,
             })
+            .await
             .expect("ipc send");
         self.arc.end_battle().await;
     }
@@ -360,11 +357,12 @@ impl Facade {
         self.0.borrow().cancellation_token.cancel();
     }
 
-    pub fn end_match(&self) {
+    pub async fn end_match(&self) {
         self.0
             .borrow()
             .ipc_client
             .send(ipc::Outgoing::MatchEnd)
+            .await
             .expect("send notification");
         std::process::exit(0);
     }
