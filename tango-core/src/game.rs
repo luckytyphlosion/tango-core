@@ -208,7 +208,11 @@ impl Game {
 
         handle.block_on(async {
             ipc_client
-                .send(ipc::Outgoing::Running)
+                .send(tango_protos::ipc::Outgoing {
+                    which: Some(tango_protos::ipc::outgoing::Which::Running(
+                        tango_protos::ipc::outgoing::Running {},
+                    )),
+                })
                 .await
                 .expect("send notification")
         });

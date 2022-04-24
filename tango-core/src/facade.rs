@@ -1,4 +1,4 @@
-use crate::{battle, game, input, ipc, protocol};
+use crate::{battle, game, input, ipc};
 
 pub struct BattleStateFacadeGuard<'a> {
     guard: tokio::sync::MutexGuard<'a, battle::BattleState>,
@@ -56,16 +56,22 @@ impl<'a> BattleStateFacadeGuard<'a> {
         if let Err(e) = self
             .match_
             .ipc_client()
-            .send(ipc::Outgoing::Protocol(protocol::Packet::Input(
-                protocol::Input {
-                    battle_number,
-                    local_tick,
-                    remote_tick,
-                    joyflags,
-                    custom_screen_state,
-                    turn: turn.clone(),
-                },
-            )))
+            .send(tango_protos::ipc::Outgoing {
+                which: Some(tango_protos::ipc::outgoing::Which::Packet(
+                    tango_protos::netplay::Packet {
+                        which: Some(tango_protos::netplay::packet::Which::Input(
+                            tango_protos::netplay::packet::Input {
+                                battle_number: battle_number,
+                                local_tick,
+                                remote_tick,
+                                joyflags: joyflags as u32,
+                                custom_screen_state: custom_screen_state as u32,
+                                turn: turn.clone(),
+                            },
+                        )),
+                    },
+                )),
+            })
             .await
         {
             log::warn!("failed to send input: {}", e);
@@ -133,8 +139,12 @@ impl<'a> BattleStateFacadeGuard<'a> {
         if battle.committed_state().is_none() {
             self.match_
                 .ipc_client()
-                .send(ipc::Outgoing::LocalState {
-                    state: state.as_slice().to_vec(),
+                .send(tango_protos::ipc::Outgoing {
+                    which: Some(tango_protos::ipc::outgoing::Which::LocalState(
+                        tango_protos::ipc::outgoing::LocalState {
+                            state: state.as_slice().to_vec(),
+                        },
+                    )),
                 })
                 .await
                 .expect("send state");
@@ -178,13 +188,19 @@ impl<'a> BattleStateFacadeGuard<'a> {
 
         self.match_
             .ipc_client()
-            .send(ipc::Outgoing::Protocol(protocol::Packet::Init(
-                protocol::Init {
-                    battle_number: self.guard.number,
-                    input_delay: local_delay,
-                    marshaled: init.to_vec(),
-                },
-            )))
+            .send(tango_protos::ipc::Outgoing {
+                which: Some(tango_protos::ipc::outgoing::Which::Packet(
+                    tango_protos::netplay::Packet {
+                        which: Some(tango_protos::netplay::packet::Which::Init(
+                            tango_protos::netplay::packet::Init {
+                                battle_number: self.guard.number,
+                                input_delay: local_delay,
+                                marshaled: init.to_vec(),
+                            },
+                        )),
+                    },
+                )),
+            })
             .await
             .expect("send init");
         log::info!("sent local init: {:?}", init);
@@ -289,8 +305,12 @@ impl MatchFacade {
     pub async fn end_battle(&self) {
         self.arc
             .ipc_client()
-            .send(ipc::Outgoing::BattleEnd {
-                battle_number: self.arc.lock_battle_state().await.number,
+            .send(tango_protos::ipc::Outgoing {
+                which: Some(tango_protos::ipc::outgoing::Which::BattleEnd(
+                    tango_protos::ipc::outgoing::BattleEnd {
+                        battle_number: self.arc.lock_battle_state().await.number,
+                    },
+                )),
             })
             .await
             .expect("ipc send");
@@ -361,7 +381,11 @@ impl Facade {
         self.0
             .borrow()
             .ipc_client
-            .send(ipc::Outgoing::MatchEnd)
+            .send(tango_protos::ipc::Outgoing {
+                which: Some(tango_protos::ipc::outgoing::Which::MatchEnd(
+                    tango_protos::ipc::outgoing::MatchEnd {},
+                )),
+            })
             .await
             .expect("send notification");
         std::process::exit(0);

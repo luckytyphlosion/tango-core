@@ -1,0 +1,28 @@
+syntax = "proto3";
+
+package tango.core.netplay;
+
+message Packet {
+  message Init {
+    uint32 battle_number = 1;
+    uint32 input_delay = 2;
+    bytes marshaled = 3;
+  }
+
+  message State { bytes state = 1; }
+
+  message Input {
+    uint32 battle_number = 1;
+    uint32 local_tick = 2;
+    uint32 remote_tick = 3;
+    uint32 joyflags = 4;
+    uint32 custom_screen_state = 5;
+    bytes turn = 6;
+  }
+
+  oneof which {
+    Init init = 1;
+    State state = 2;
+    Input input = 3;
+  }
+}

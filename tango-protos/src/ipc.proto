@@ -1,0 +1,29 @@
+syntax = "proto3";
+
+import "netplay.proto";
+
+package tango.core.ipc;
+
+message Incoming {
+  oneof which { netplay.Packet packet = 1; }
+}
+
+message Outgoing {
+  message Running {}
+  message MatchEnd {}
+  message BattleStart {
+    uint32 battle_number = 1;
+    uint32 local_player_index = 2;
+  }
+  message LocalState { bytes state = 1; }
+  message BattleEnd { uint32 battle_number = 1; }
+
+  oneof which {
+    netplay.Packet packet = 1;
+    Running running = 2;
+    MatchEnd match_end = 3;
+    BattleStart battle_start = 4;
+    LocalState local_state = 5;
+    BattleEnd battle_end = 6;
+  }
+}

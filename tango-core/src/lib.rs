@@ -10,6 +10,5 @@ pub mod game;
 pub mod hooks;
 pub mod input;
 pub mod ipc;
-pub mod protocol;
 pub mod replay;
 pub mod tps;

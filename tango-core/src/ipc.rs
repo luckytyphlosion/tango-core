@@ -1,19 +1,7 @@
-use bincode::Options;
+use prost::Message;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-use crate::{game, protocol};
-
-lazy_static! {
-    static ref BINCODE_OPTIONS: bincode::config::WithOtherLimit<
-        bincode::config::WithOtherIntEncoding<
-            bincode::config::DefaultOptions,
-            bincode::config::FixintEncoding,
-        >,
-        bincode::config::Bounded,
-    > = bincode::DefaultOptions::new()
-        .with_fixint_encoding()
-        .with_limit(1024 * 1024);
-}
+use crate::game;
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, typescript_type_def::TypeDef)]
 pub struct Args {
@@ -71,28 +59,6 @@ impl Args {
     }
 }
 
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-pub enum Incoming {
-    Protocol(protocol::Packet),
-}
-
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-pub enum Outgoing {
-    Running,
-    MatchEnd,
-    BattleStart {
-        battle_number: u8,
-        local_player_index: u8,
-    },
-    LocalState {
-        state: Vec<u8>,
-    },
-    BattleEnd {
-        battle_number: u8,
-    },
-    Protocol(protocol::Packet),
-}
-
 #[derive(Clone)]
 pub struct Client(std::sync::Arc<tokio::sync::Mutex<Inner>>);
 
@@ -109,21 +75,21 @@ impl Client {
         })))
     }
 
-    pub async fn send(&self, req: Outgoing) -> anyhow::Result<()> {
+    pub async fn send(&self, req: tango_protos::ipc::Outgoing) -> anyhow::Result<()> {
         let mut inner = self.0.lock().await;
-        let buf = BINCODE_OPTIONS.serialize(&req)?;
+        let buf = req.encode_to_vec();
         inner.writer.write_u32_le(buf.len() as u32).await?;
         inner.writer.write_all(&buf).await?;
         inner.writer.flush().await?;
         Ok(())
     }
 
-    pub async fn receive(&self) -> anyhow::Result<Incoming> {
+    pub async fn receive(&self) -> anyhow::Result<tango_protos::ipc::Incoming> {
         let mut inner = self.0.lock().await;
         let size = inner.reader.read_u32_le().await? as usize;
         let mut buf = vec![0u8; size];
         inner.reader.read_exact(&mut buf).await?;
-        let resp = BINCODE_OPTIONS.deserialize(&buf)?;
+        let resp = tango_protos::ipc::Incoming::decode(bytes::Bytes::from(buf))?;
         Ok(resp)
     }
 }
