@@ -1,3 +1,4 @@
+use prost::Message;
 use rand::Rng;
 use rand::SeedableRng;
 
@@ -130,24 +131,36 @@ impl Match {
         loop {
             match self.ipc_client.receive().await?.which {
                 Some(tango_protos::ipc::incoming::Which::Packet(
-                    tango_protos::netplay::Packet {
-                        which: Some(tango_protos::netplay::packet::Which::Init(init)),
-                    },
-                )) => {
-                    self.remote_init_sender.send(init).await?;
-                }
-                Some(tango_protos::ipc::incoming::Which::Packet(
-                    tango_protos::netplay::Packet {
-                        which: Some(tango_protos::netplay::packet::Which::Input(input)),
-                    },
-                )) => {
-                    let state_committed_rx = {
-                        let mut battle_state = self.battle_state.lock().await;
+                    tango_protos::ipc::incoming::Packet { raw },
+                )) => match tango_protos::netplay::Packet::decode(bytes::Bytes::from(raw))?.which {
+                    Some(tango_protos::netplay::packet::Which::Init(init)) => {
+                        self.remote_init_sender.send(init).await?;
+                    }
 
-                        if input.battle_number != battle_state.number {
-                            log::info!("battle number mismatch, dropping input");
-                            continue;
+                    Some(tango_protos::netplay::packet::Which::Input(input)) => {
+                        let state_committed_rx = {
+                            let mut battle_state = self.battle_state.lock().await;
+
+                            if input.battle_number != battle_state.number {
+                                log::info!("battle number mismatch, dropping input");
+                                continue;
+                            }
+
+                            let battle = match &mut battle_state.battle {
+                                None => {
+                                    log::info!("no battle in progress, dropping input");
+                                    continue;
+                                }
+                                Some(b) => b,
+                            };
+                            battle.state_committed_rx.take()
+                        };
+
+                        if let Some(state_committed_rx) = state_committed_rx {
+                            state_committed_rx.await.unwrap();
                         }
+
+                        let mut battle_state = self.battle_state.lock().await;
 
                         let battle = match &mut battle_state.battle {
                             None => {
@@ -156,38 +169,22 @@ impl Match {
                             }
                             Some(b) => b,
                         };
-                        battle.state_committed_rx.take()
-                    };
 
-                    if let Some(state_committed_rx) = state_committed_rx {
-                        state_committed_rx.await.unwrap();
-                    }
-
-                    let mut battle_state = self.battle_state.lock().await;
-
-                    let battle = match &mut battle_state.battle {
-                        None => {
-                            log::info!("no battle in progress, dropping input");
-                            continue;
+                        if !battle.can_add_remote_input() {
+                            anyhow::bail!("remote overflowed our input buffer");
                         }
-                        Some(b) => b,
-                    };
 
-                    if !battle.can_add_remote_input() {
-                        anyhow::bail!("remote overflowed our input buffer");
+                        battle.add_remote_input(input::Input {
+                            local_tick: input.local_tick,
+                            remote_tick: input.remote_tick,
+                            joyflags: input.joyflags as u16,
+                            custom_screen_state: input.custom_screen_state as u8,
+                            turn: input.turn,
+                        });
                     }
-
-                    battle.add_remote_input(input::Input {
-                        local_tick: input.local_tick,
-                        remote_tick: input.remote_tick,
-                        joyflags: input.joyflags as u16,
-                        custom_screen_state: input.custom_screen_state as u8,
-                        turn: input.turn,
-                    });
-                }
-                p => {
-                    anyhow::bail!("unknown packet: {:?}", p);
-                }
+                    p => anyhow::bail!("unknown packet: {:?}", p),
+                },
+                p => anyhow::bail!("unknown packet: {:?}", p),
             }
         }
     }

@@ -1,14 +1,14 @@
 syntax = "proto3";
 
-import "netplay.proto";
-
 package tango.core.ipc;
 
 message Incoming {
-  oneof which { netplay.Packet packet = 1; }
+  message Packet { bytes raw = 1; }
+  oneof which { Packet packet = 1; }
 }
 
 message Outgoing {
+  message Packet { bytes raw = 1; }
   message Running {}
   message MatchEnd {}
   message BattleStart {
@@ -19,7 +19,7 @@ message Outgoing {
   message BattleEnd { uint32 battle_number = 1; }
 
   oneof which {
-    netplay.Packet packet = 1;
+    Packet packet = 1;
     Running running = 2;
     MatchEnd match_end = 3;
     BattleStart battle_start = 4;

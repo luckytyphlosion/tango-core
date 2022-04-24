@@ -1,3 +1,5 @@
+use prost::Message;
+
 use crate::{battle, game, input, ipc};
 
 pub struct BattleStateFacadeGuard<'a> {
@@ -58,17 +60,20 @@ impl<'a> BattleStateFacadeGuard<'a> {
             .ipc_client()
             .send(tango_protos::ipc::Outgoing {
                 which: Some(tango_protos::ipc::outgoing::Which::Packet(
-                    tango_protos::netplay::Packet {
-                        which: Some(tango_protos::netplay::packet::Which::Input(
-                            tango_protos::netplay::packet::Input {
-                                battle_number: battle_number,
-                                local_tick,
-                                remote_tick,
-                                joyflags: joyflags as u32,
-                                custom_screen_state: custom_screen_state as u32,
-                                turn: turn.clone(),
-                            },
-                        )),
+                    tango_protos::ipc::outgoing::Packet {
+                        raw: tango_protos::netplay::Packet {
+                            which: Some(tango_protos::netplay::packet::Which::Input(
+                                tango_protos::netplay::packet::Input {
+                                    battle_number: battle_number,
+                                    local_tick,
+                                    remote_tick,
+                                    joyflags: joyflags as u32,
+                                    custom_screen_state: custom_screen_state as u32,
+                                    turn: turn.clone(),
+                                },
+                            )),
+                        }
+                        .encode_to_vec(),
                     },
                 )),
             })
@@ -190,14 +195,17 @@ impl<'a> BattleStateFacadeGuard<'a> {
             .ipc_client()
             .send(tango_protos::ipc::Outgoing {
                 which: Some(tango_protos::ipc::outgoing::Which::Packet(
-                    tango_protos::netplay::Packet {
-                        which: Some(tango_protos::netplay::packet::Which::Init(
-                            tango_protos::netplay::packet::Init {
-                                battle_number: self.guard.number,
-                                input_delay: local_delay,
-                                marshaled: init.to_vec(),
-                            },
-                        )),
+                    tango_protos::ipc::outgoing::Packet {
+                        raw: tango_protos::netplay::Packet {
+                            which: Some(tango_protos::netplay::packet::Which::Init(
+                                tango_protos::netplay::packet::Init {
+                                    battle_number: self.guard.number,
+                                    input_delay: local_delay,
+                                    marshaled: init.to_vec(),
+                                },
+                            )),
+                        }
+                        .encode_to_vec(),
                     },
                 )),
             })
