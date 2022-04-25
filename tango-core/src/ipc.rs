@@ -23,6 +23,7 @@ impl Client {
         let mut writer = self.writer.lock().await;
         let buf = req.encode_to_vec();
         writer.write_u32_le(buf.len() as u32).await?;
+        writer.flush().await?;
         writer.write_all(&buf).await?;
         writer.flush().await?;
         Ok(())
