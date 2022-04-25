@@ -45,8 +45,8 @@ async fn handle_connection(
                     Some(tokio_tungstenite::tungstenite::Message::Binary(d)) => {
                         tango_protos::matchmaking::Packet::decode(bytes::Bytes::from(d))?
                     }
-                    Some(_) => {
-                        anyhow::bail!("unexpected message");
+                    Some(m) => {
+                        anyhow::bail!("unexpected message: {:?}", m);
                     }
                     None => {
                         break;
@@ -121,7 +121,9 @@ async fn handle_connection(
                             ))
                             .await?;
                     }
-                    Some(tango_protos::matchmaking::packet::Which::IceCandidate(ice_candidate)) => {
+                    Some(tango_protos::matchmaking::packet::Which::IceCandidates(
+                        ice_candidates,
+                    )) => {
                         let session = match session.as_ref() {
                             Some(session) => session,
                             None => {
@@ -133,9 +135,9 @@ async fn handle_connection(
                             .send(tokio_tungstenite::tungstenite::Message::Binary(
                                 tango_protos::matchmaking::Packet {
                                     which: Some(
-                                        tango_protos::matchmaking::packet::Which::IceCandidate(
-                                            tango_protos::matchmaking::packet::IceCandidate {
-                                                ice_candidate: ice_candidate.ice_candidate,
+                                        tango_protos::matchmaking::packet::Which::IceCandidates(
+                                            tango_protos::matchmaking::packet::IceCandidates {
+                                                ice_candidates: ice_candidates.ice_candidates,
                                             },
                                         ),
                                     ),

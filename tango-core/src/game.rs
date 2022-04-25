@@ -73,7 +73,7 @@ impl Game {
                     )),
                 })
                 .await
-                .expect("send notification")
+                .expect("send running");
         });
 
         let event_loop = Some(winit::event_loop::EventLoop::new());

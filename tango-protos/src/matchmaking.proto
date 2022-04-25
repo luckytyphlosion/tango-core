@@ -13,12 +13,12 @@ message Packet {
 
   message Answer { string sdp = 1; }
 
-  message ICECandidate { string ice_candidate = 1; }
+  message ICECandidates { repeated string ice_candidates = 1; }
 
   oneof which {
     Start start = 1;
     Offer offer = 2;
     Answer answer = 3;
-    ICECandidate ice_candidate = 4;
+    ICECandidates ice_candidates = 4;
   }
 }
