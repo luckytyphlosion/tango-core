@@ -1,6 +1,6 @@
 use prost::Message;
 use rand::Rng;
-use rand::SeedableRng;
+use serde::de::Error;
 
 use crate::audio;
 use crate::facade;
@@ -9,6 +9,23 @@ use crate::game;
 use crate::hooks;
 use crate::input;
 use crate::ipc;
+
+fn deserialize_rng_seed<'de, D>(deserializer: D) -> Result<u128, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let s: &str = serde::Deserialize::deserialize(deserializer)?;
+    u128::from_str_radix(&s, 16).map_err(D::Error::custom)
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct Settings {
+    #[serde(deserialize_with = "deserialize_rng_seed")]
+    pub rng_seed: u128,
+    pub input_delay: u32,
+    pub is_polite: bool,
+    pub match_type: u16,
+}
 
 pub struct BattleState {
     pub number: u32,
@@ -22,7 +39,7 @@ pub struct Match {
     hooks: &'static Box<dyn hooks::Hooks + Send + Sync>,
     ipc_client: ipc::Client,
     rng: tokio::sync::Mutex<rand_pcg::Mcg128Xsl64>,
-    settings: ipc::MatchSettings,
+    settings: Settings,
     battle_state: tokio::sync::Mutex<BattleState>,
     remote_init_sender: tokio::sync::mpsc::Sender<tango_protos::netplay::packet::Init>,
     remote_init_receiver:
@@ -102,10 +119,10 @@ impl Match {
         audio_mux: audio::mux_stream::MuxStream,
         ipc_client: ipc::Client,
         primary_thread_handle: mgba::thread::Handle,
-        settings: ipc::MatchSettings,
+        settings: Settings,
     ) -> Self {
         let is_polite = settings.is_polite;
-        let mut rng = rand_pcg::Mcg128Xsl64::from_seed(settings.rng_seed);
+        let mut rng = rand_pcg::Mcg128Xsl64::new(settings.rng_seed);
         let (remote_init_sender, remote_init_receiver) = tokio::sync::mpsc::channel(1);
         let did_polite_win_last_battle = rng.gen::<bool>();
         Self {

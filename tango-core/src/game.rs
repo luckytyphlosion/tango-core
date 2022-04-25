@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 pub const EXPECTED_FPS: u32 = 60;
 
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, serde::Deserialize)]
 pub struct Keymapping {
     pub up: winit::event::VirtualKeyCode,
     pub down: winit::event::VirtualKeyCode,
@@ -43,7 +43,7 @@ impl Game {
         keymapping: Keymapping,
         rom_path: std::path::PathBuf,
         save_path: std::path::PathBuf,
-        match_settings: Option<ipc::MatchSettings>,
+        match_settings: Option<battle::Settings>,
     ) -> Result<Game, anyhow::Error> {
         log::info!(
             "wgpu adapters: {:?}",

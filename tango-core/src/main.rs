@@ -1,11 +1,27 @@
 #![windows_subsystem = "windows"]
 
+use clap::StructOpt;
+
+#[derive(clap::Parser)]
+struct Cli {
+    #[clap(long)]
+    pub window_title: String,
+
+    #[clap(parse(from_os_str))]
+    pub rom_path: std::path::PathBuf,
+
+    #[clap(parse(from_os_str))]
+    pub save_path: std::path::PathBuf,
+
+    #[clap(long)]
+    pub keymapping: String,
+
+    #[clap(long)]
+    pub match_settings: Option<String>,
+}
+
 fn main() -> Result<(), anyhow::Error> {
-    let args = tango_core::ipc::Args::parse(
-        &std::env::args()
-            .nth(1)
-            .ok_or_else(|| anyhow::anyhow!("missing startup args"))?,
-    )?;
+    let args = Cli::parse();
 
     env_logger::Builder::from_default_env()
         .filter(Some("tango_core"), log::LevelFilter::Info)
@@ -22,10 +38,12 @@ fn main() -> Result<(), anyhow::Error> {
     let g = tango_core::game::Game::new(
         tango_core::ipc::Client::new_from_stdio(),
         args.window_title,
-        args.keymapping.try_into()?,
+        serde_json::from_str(&args.keymapping)?,
         args.rom_path.into(),
         args.save_path.into(),
-        args.match_settings,
+        args.match_settings
+            .map(|raw| serde_json::from_str(&raw))
+            .map_or(Ok(None), |v| v.map(Some))?,
     )?;
     g.run()?;
     Ok(())
