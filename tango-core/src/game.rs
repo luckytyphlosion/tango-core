@@ -65,6 +65,17 @@ impl Game {
 
         let handle = rt.handle().clone();
 
+        handle.block_on(async {
+            ipc_client
+                .send(tango_protos::ipc::ToSupervisor {
+                    which: Some(tango_protos::ipc::to_supervisor::Which::Running(
+                        tango_protos::ipc::to_supervisor::Running {},
+                    )),
+                })
+                .await
+                .expect("send notification")
+        });
+
         let event_loop = Some(winit::event_loop::EventLoop::new());
 
         let current_input =
@@ -205,17 +216,6 @@ impl Game {
 
         let stream = audio::open_stream(&audio_device, &audio_supported_config, audio_mux.clone())?;
         stream.play()?;
-
-        handle.block_on(async {
-            ipc_client
-                .send(tango_protos::ipc::Outgoing {
-                    which: Some(tango_protos::ipc::outgoing::Which::Running(
-                        tango_protos::ipc::outgoing::Running {},
-                    )),
-                })
-                .await
-                .expect("send notification")
-        });
 
         Ok(Game {
             _rt: rt,

@@ -2,12 +2,12 @@ syntax = "proto3";
 
 package tango.core.ipc;
 
-message Incoming {
+message FromSupervisor {
   message Packet { bytes raw = 1; }
   oneof which { Packet packet = 1; }
 }
 
-message Outgoing {
+message ToSupervisor {
   message Packet { bytes raw = 1; }
   message Running {}
   message MatchEnd {}

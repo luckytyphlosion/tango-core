@@ -38,12 +38,19 @@ fn main() -> Result<(), anyhow::Error> {
     let g = tango_core::game::Game::new(
         tango_core::ipc::Client::new_from_stdio(),
         args.window_title,
-        serde_json::from_str(&args.keymapping)?,
+        serde_json::from_str(&args.keymapping)
+            .map_err(|e| anyhow::format_err!("can't deserialize keymapping: {:?}", e))?,
         args.rom_path.into(),
         args.save_path.into(),
-        args.match_settings
+        match args
+            .match_settings
             .map(|raw| serde_json::from_str(&raw))
-            .map_or(Ok(None), |v| v.map(Some))?,
+            .map_or(Ok(None), |v| v.map(Some))
+            .map_err(|e| anyhow::format_err!("can't deserialize match settings: {:?}", e))?
+        {
+            None => None,
+            Some(v) => v,
+        },
     )?;
     g.run()?;
     Ok(())

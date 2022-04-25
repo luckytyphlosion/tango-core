@@ -58,9 +58,9 @@ impl<'a> BattleStateFacadeGuard<'a> {
         if let Err(e) = self
             .match_
             .ipc_client()
-            .send(tango_protos::ipc::Outgoing {
-                which: Some(tango_protos::ipc::outgoing::Which::Packet(
-                    tango_protos::ipc::outgoing::Packet {
+            .send(tango_protos::ipc::ToSupervisor {
+                which: Some(tango_protos::ipc::to_supervisor::Which::Packet(
+                    tango_protos::ipc::to_supervisor::Packet {
                         raw: tango_protos::netplay::Packet {
                             which: Some(tango_protos::netplay::packet::Which::Input(
                                 tango_protos::netplay::packet::Input {
@@ -144,9 +144,9 @@ impl<'a> BattleStateFacadeGuard<'a> {
         if battle.committed_state().is_none() {
             self.match_
                 .ipc_client()
-                .send(tango_protos::ipc::Outgoing {
-                    which: Some(tango_protos::ipc::outgoing::Which::LocalState(
-                        tango_protos::ipc::outgoing::LocalState {
+                .send(tango_protos::ipc::ToSupervisor {
+                    which: Some(tango_protos::ipc::to_supervisor::Which::LocalState(
+                        tango_protos::ipc::to_supervisor::LocalState {
                             state: state.as_slice().to_vec(),
                         },
                     )),
@@ -193,9 +193,9 @@ impl<'a> BattleStateFacadeGuard<'a> {
 
         self.match_
             .ipc_client()
-            .send(tango_protos::ipc::Outgoing {
-                which: Some(tango_protos::ipc::outgoing::Which::Packet(
-                    tango_protos::ipc::outgoing::Packet {
+            .send(tango_protos::ipc::ToSupervisor {
+                which: Some(tango_protos::ipc::to_supervisor::Which::Packet(
+                    tango_protos::ipc::to_supervisor::Packet {
                         raw: tango_protos::netplay::Packet {
                             which: Some(tango_protos::netplay::packet::Which::Init(
                                 tango_protos::netplay::packet::Init {
@@ -313,9 +313,9 @@ impl MatchFacade {
     pub async fn end_battle(&self) {
         self.arc
             .ipc_client()
-            .send(tango_protos::ipc::Outgoing {
-                which: Some(tango_protos::ipc::outgoing::Which::BattleEnd(
-                    tango_protos::ipc::outgoing::BattleEnd {
+            .send(tango_protos::ipc::ToSupervisor {
+                which: Some(tango_protos::ipc::to_supervisor::Which::BattleEnd(
+                    tango_protos::ipc::to_supervisor::BattleEnd {
                         battle_number: self.arc.lock_battle_state().await.number,
                     },
                 )),
@@ -389,9 +389,9 @@ impl Facade {
         self.0
             .borrow()
             .ipc_client
-            .send(tango_protos::ipc::Outgoing {
-                which: Some(tango_protos::ipc::outgoing::Which::MatchEnd(
-                    tango_protos::ipc::outgoing::MatchEnd {},
+            .send(tango_protos::ipc::ToSupervisor {
+                which: Some(tango_protos::ipc::to_supervisor::Which::MatchEnd(
+                    tango_protos::ipc::to_supervisor::MatchEnd {},
                 )),
             })
             .await

@@ -147,8 +147,8 @@ impl Match {
     pub async fn run(&self) -> anyhow::Result<()> {
         loop {
             match self.ipc_client.receive().await?.which {
-                Some(tango_protos::ipc::incoming::Which::Packet(
-                    tango_protos::ipc::incoming::Packet { raw },
+                Some(tango_protos::ipc::from_supervisor::Which::Packet(
+                    tango_protos::ipc::from_supervisor::Packet { raw },
                 )) => match tango_protos::netplay::Packet::decode(bytes::Bytes::from(raw))?.which {
                     Some(tango_protos::netplay::packet::Which::Init(init)) => {
                         self.remote_init_sender.send(init).await?;
@@ -306,9 +306,9 @@ impl Match {
         });
 
         self.ipc_client
-            .send(tango_protos::ipc::Outgoing {
-                which: Some(tango_protos::ipc::outgoing::Which::BattleStart(
-                    tango_protos::ipc::outgoing::BattleStart {
+            .send(tango_protos::ipc::ToSupervisor {
+                which: Some(tango_protos::ipc::to_supervisor::Which::BattleStart(
+                    tango_protos::ipc::to_supervisor::BattleStart {
                         local_player_index: local_player_index as u32,
                         battle_number: battle_state.number,
                     },
