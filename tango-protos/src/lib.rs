@@ -5,3 +5,7 @@ pub mod ipc {
 pub mod netplay {
     include!(concat!(env!("OUT_DIR"), "/tango.core.netplay.rs"));
 }
+
+pub mod matchmaking {
+    include!(concat!(env!("OUT_DIR"), "/tango.matchmaking.rs"));
+}

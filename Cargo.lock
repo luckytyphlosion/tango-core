@@ -3345,14 +3345,15 @@ name = "tango-matchmaking"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "bincode",
+ "bytes",
  "env_logger 0.9.0",
  "envconfig",
  "futures-util",
  "git-version",
  "lazy_static",
  "log",
- "serde",
+ "prost",
+ "tango-protos",
  "tokio",
  "tokio-tungstenite",
  "webrtc",
