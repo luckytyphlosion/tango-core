@@ -3327,7 +3327,6 @@ dependencies = [
  "sha3",
  "shell-words",
  "subtle",
- "tango-matchmaking",
  "tango-protos",
  "tempfile",
  "time",
