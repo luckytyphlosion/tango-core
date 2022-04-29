@@ -1,11 +1,14 @@
 pub use datachannel::sdp::parse_sdp;
 pub use datachannel::sdp::SdpSession;
+pub use datachannel::ConnectionState;
 pub use datachannel::DataChannelInit;
+pub use datachannel::GatheringState;
 pub use datachannel::IceCandidate;
 pub use datachannel::Reliability;
 pub use datachannel::RtcConfig;
 pub use datachannel::SdpType;
 pub use datachannel::SessionDescription;
+pub use datachannel::SignalingState;
 
 pub struct PeerConnection {
     peer_conn: Box<datachannel::RtcPeerConnection<PeerConnectionHandler>>,
@@ -110,9 +113,13 @@ struct PeerConnectionHandler {
     data_channel_tx: tokio::sync::mpsc::Sender<DataChannel>,
 }
 
+#[derive(Debug)]
 pub enum PeerConnectionSignal {
     SessionDescription(SessionDescription),
     IceCandidate(IceCandidate),
+    ConnectionStateChange(ConnectionState),
+    GatheringStateChange(GatheringState),
+    SignalingStateChange(SignalingState),
 }
 
 impl datachannel::PeerConnectionHandler for PeerConnectionHandler {
@@ -146,11 +153,25 @@ impl datachannel::PeerConnectionHandler for PeerConnectionHandler {
             .blocking_send(PeerConnectionSignal::IceCandidate(cand));
     }
 
-    fn on_connection_state_change(&mut self, _state: datachannel::ConnectionState) {}
+    fn on_connection_state_change(&mut self, _state: ConnectionState) {
+        // This callback can be called from any thread, including with the async context!
+        // Using blocking_send here is unsafe, so we need to figure out a better way to do this.
+        // let _ = self
+        //     .signal_tx
+        //     .blocking_send(PeerConnectionSignal::ConnectionStateChange(state));
+    }
 
-    fn on_gathering_state_change(&mut self, _state: datachannel::GatheringState) {}
+    fn on_gathering_state_change(&mut self, state: GatheringState) {
+        let _ = self
+            .signal_tx
+            .blocking_send(PeerConnectionSignal::GatheringStateChange(state));
+    }
 
-    fn on_signaling_state_change(&mut self, _state: datachannel::SignalingState) {}
+    fn on_signaling_state_change(&mut self, state: SignalingState) {
+        let _ = self
+            .signal_tx
+            .blocking_send(PeerConnectionSignal::SignalingStateChange(state));
+    }
 
     fn on_data_channel(&mut self, dc: Box<datachannel::RtcDataChannel<Self::DCH>>) {
         let (message_rx, state) = self.pending_dc_receiver.take().unwrap();
