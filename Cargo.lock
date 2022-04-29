@@ -3420,8 +3420,3 @@ dependencies = [
  "cc",
  "libc",
 ]
-
-[[patch.unused]]
-name = "webrtc-util"
-version = "0.5.3"
-source = "git+https://github.com/webrtc-rs/util?rev=2d193c0fd146e4d48ce63d07dbd085702b60aac2#2d193c0fd146e4d48ce63d07dbd085702b60aac2"

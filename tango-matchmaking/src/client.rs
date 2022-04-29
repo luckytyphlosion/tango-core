@@ -35,60 +35,86 @@ where
         .await?;
     log::info!("negotiation start sent");
 
-    match match stream
-        .try_next()
-        .await?
-        .ok_or(anyhow::format_err!("stream ended early"))?
-    {
-        tokio_tungstenite::tungstenite::Message::Binary(d) => protocol::Packet::deserialize(&d)?,
-        _ => anyhow::bail!("unexpected message format"),
-    } {
-        protocol::Packet::Start(_) => {
-            anyhow::bail!("unexpected start");
-        }
-        protocol::Packet::Offer(offer) => {
-            log::info!("received an offer, this is the polite side");
-
-            peer_conn.set_local_description(datachannel_wrapper::SdpType::Rollback)?;
-            peer_conn.set_remote_description(datachannel_wrapper::SessionDescription {
-                sdp_type: datachannel_wrapper::SdpType::Offer,
-                sdp: datachannel_wrapper::parse_sdp(&offer.sdp.to_string(), false)?,
-            })?;
-
-            let local_description = if let Some(
-                datachannel_wrapper::PeerConnectionSignal::SessionDescription(sess_desc),
-            ) = signal_receiver.recv().await
-            {
-                sess_desc
+    tokio::select! {
+        signal_msg = signal_receiver.recv() => {
+            let cand = if let Some(datachannel_wrapper::PeerConnectionSignal::IceCandidate(cand)) = signal_msg {
+                cand
             } else {
-                anyhow::bail!("session description not received")
+                anyhow::bail!("ice candidate not received")
             };
 
             stream
                 .send(tokio_tungstenite::tungstenite::Message::Binary(
-                    protocol::Packet::Answer(protocol::Answer {
-                        sdp: local_description.sdp.to_string(),
+                    protocol::Packet::ICECandidate(protocol::ICECandidate {
+                        candidate: cand.candidate,
+                        mid: cand.mid,
                     })
                     .serialize()?,
                 ))
                 .await?;
-            log::info!("sent answer to impolite side");
         }
-        protocol::Packet::Answer(answer) => {
-            log::info!("received an answer, this is the impolite side");
+        ws_msg = stream.try_next() => {
+            let raw = if let Some(raw) = ws_msg? {
+                raw
+            } else {
+                anyhow::bail!("stream ended early");
+            };
 
-            peer_conn.set_remote_description(datachannel_wrapper::SessionDescription {
-                sdp_type: datachannel_wrapper::SdpType::Answer,
-                sdp: datachannel_wrapper::parse_sdp(&answer.sdp.to_string(), false)?,
-            })?;
+            let packet = if let tokio_tungstenite::tungstenite::Message::Binary(d) = raw {
+                protocol::Packet::deserialize(&d)?
+            } else {
+                anyhow::bail!("invalid packet");
+            };
+
+            match packet {
+                protocol::Packet::Start(_) => {
+                    anyhow::bail!("unexpected start");
+                }
+                protocol::Packet::Offer(offer) => {
+                    log::info!("received an offer, this is the polite side");
+
+                    peer_conn.set_local_description(datachannel_wrapper::SdpType::Rollback)?;
+                    peer_conn.set_remote_description(datachannel_wrapper::SessionDescription {
+                        sdp_type: datachannel_wrapper::SdpType::Offer,
+                        sdp: datachannel_wrapper::parse_sdp(&offer.sdp.to_string(), false)?,
+                    })?;
+
+                    let local_description = if let Some(
+                        datachannel_wrapper::PeerConnectionSignal::SessionDescription(sess_desc),
+                    ) = signal_receiver.recv().await
+                    {
+                        sess_desc
+                    } else {
+                        anyhow::bail!("session description not received")
+                    };
+
+                    stream
+                        .send(tokio_tungstenite::tungstenite::Message::Binary(
+                            protocol::Packet::Answer(protocol::Answer {
+                                sdp: local_description.sdp.to_string(),
+                            })
+                            .serialize()?,
+                        ))
+                        .await?;
+                    log::info!("sent answer to impolite side");
+                }
+                protocol::Packet::Answer(answer) => {
+                    log::info!("received an answer, this is the impolite side");
+
+                    peer_conn.set_remote_description(datachannel_wrapper::SessionDescription {
+                        sdp_type: datachannel_wrapper::SdpType::Answer,
+                        sdp: datachannel_wrapper::parse_sdp(&answer.sdp.to_string(), false)?,
+                    })?;
+                }
+                protocol::Packet::ICECandidate(ice_candidate) => {
+                    peer_conn.add_remote_candidate(datachannel_wrapper::IceCandidate {
+                        candidate: ice_candidate.candidate,
+                        mid: ice_candidate.mid,
+                    })?;
+                }
+            }
         }
-        protocol::Packet::ICECandidate(ice_candidate) => {
-            peer_conn.add_remote_candidate(datachannel_wrapper::IceCandidate {
-                candidate: ice_candidate.candidate,
-                mid: ice_candidate.mid,
-            })?;
-        }
-    }
+    };
 
     stream.close(None).await?;
 
