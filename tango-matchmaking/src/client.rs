@@ -2,49 +2,33 @@ use super::protocol;
 use futures_util::SinkExt;
 use futures_util::TryStreamExt;
 
-#[derive(Eq, PartialEq, Clone, Copy)]
-pub enum ConnectionSide {
-    Polite,
-    Impolite,
-}
-
-pub async fn connect<T, F, Fut>(
+pub async fn connect(
     addr: &str,
-    make_peer_conn: F,
+    peer_conn: &mut datachannel_wrapper::PeerConnection,
     session_id: &str,
-) -> Result<
-    (
-        webrtc::peer_connection::RTCPeerConnection,
-        T,
-        ConnectionSide,
-    ),
-    anyhow::Error,
->
+) -> Result<(), anyhow::Error>
 where
-    Fut: std::future::Future<
-        Output = anyhow::Result<(webrtc::peer_connection::RTCPeerConnection, T)>,
-    >,
-    F: Fn() -> Fut,
 {
     let (mut stream, _) = tokio_tungstenite::connect_async(addr).await?;
 
-    let mut side = ConnectionSide::Polite;
-
     log::info!("negotiation started");
 
-    let (mut peer_conn, mut r) = make_peer_conn().await?;
-
-    let mut gather_complete = peer_conn.gathering_complete_promise().await;
-    let offer = peer_conn.create_offer(None).await?;
-    peer_conn.set_local_description(offer).await?;
-    gather_complete.recv().await;
+    let signal_receiver = peer_conn.signal_receiver();
+    let local_description =
+        if let Some(datachannel_wrapper::PeerConnectionSignal::SessionDescription(sess_desc)) =
+            signal_receiver.recv().await
+        {
+            sess_desc
+        } else {
+            anyhow::bail!("session description not received")
+        };
 
     stream
         .send(tokio_tungstenite::tungstenite::Message::Binary(
             protocol::Packet::Start(protocol::Start {
                 protocol_version: protocol::VERSION,
                 session_id: session_id.to_string(),
-                offer_sdp: peer_conn.local_description().await.expect("local sdp").sdp,
+                offer_sdp: todo!("local_description.sdp"),
             })
             .serialize()?,
         ))
@@ -65,26 +49,21 @@ where
         protocol::Packet::Offer(offer) => {
             log::info!("received an offer, this is the polite side");
 
-            let (peer_conn2, r2) = make_peer_conn().await?;
-            peer_conn = peer_conn2;
-            r = r2;
+            peer_conn.set_local_description(datachannel_wrapper::SdpType::Rollback);
 
+            let local_description = if let Some(
+                datachannel_wrapper::PeerConnectionSignal::SessionDescription(sess_desc),
+            ) = signal_receiver.recv().await
             {
-                let mut sdp = webrtc::peer_connection::sdp::session_description::RTCSessionDescription::default();
-                sdp.sdp_type = webrtc::peer_connection::sdp::sdp_type::RTCSdpType::Offer;
-                sdp.sdp = offer.sdp;
-                peer_conn.set_remote_description(sdp).await?;
-            }
-
-            let mut gather_complete = peer_conn.gathering_complete_promise().await;
-            let offer = peer_conn.create_answer(None).await?;
-            peer_conn.set_local_description(offer).await?;
-            gather_complete.recv().await;
+                sess_desc
+            } else {
+                anyhow::bail!("session description not received")
+            };
 
             stream
                 .send(tokio_tungstenite::tungstenite::Message::Binary(
                     protocol::Packet::Answer(protocol::Answer {
-                        sdp: peer_conn.local_description().await.expect("remote sdp").sdp,
+                        sdp: local_description.sdp.to_string(),
                     })
                     .serialize()?,
                 ))
@@ -94,12 +73,10 @@ where
         protocol::Packet::Answer(answer) => {
             log::info!("received an answer, this is the impolite side");
 
-            side = ConnectionSide::Impolite;
-            let mut sdp =
-                webrtc::peer_connection::sdp::session_description::RTCSessionDescription::default();
-            sdp.sdp_type = webrtc::peer_connection::sdp::sdp_type::RTCSdpType::Answer;
-            sdp.sdp = answer.sdp;
-            peer_conn.set_remote_description(sdp).await?;
+            peer_conn.set_remote_description(datachannel_wrapper::SessionDescription {
+                sdp_type: datachannel_wrapper::SdpType::Answer,
+                sdp: todo!("answer.sdp"),
+            })?;
         }
         protocol::Packet::ICECandidate(_) => {
             anyhow::bail!("unexpected ice candidate");
@@ -108,5 +85,5 @@ where
 
     stream.close(None).await?;
 
-    Ok((peer_conn, r, side))
+    Ok(())
 }
