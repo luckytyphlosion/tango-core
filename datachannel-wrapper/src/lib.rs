@@ -1,3 +1,12 @@
+pub use datachannel::sdp::parse_sdp;
+pub use datachannel::sdp::SdpSession;
+pub use datachannel::DataChannelInit;
+pub use datachannel::IceCandidate;
+pub use datachannel::Reliability;
+pub use datachannel::RtcConfig;
+pub use datachannel::SdpType;
+pub use datachannel::SessionDescription;
+
 pub struct PeerConnection {
     peer_conn: Box<datachannel::RtcPeerConnection<PeerConnectionHandler>>,
     data_channel_rx: tokio::sync::mpsc::Receiver<DataChannel>,
@@ -78,16 +87,16 @@ impl PeerConnection {
         Ok(())
     }
 
-    pub fn local_description(&self) -> Option<datachannel::SessionDescription> {
+    pub fn local_description(&self) -> Option<SessionDescription> {
         self.peer_conn.local_description()
     }
 
-    pub fn remote_description(&self) -> Option<datachannel::SessionDescription> {
+    pub fn remote_description(&self) -> Option<SessionDescription> {
         self.peer_conn.remote_description()
     }
 
-    pub fn add_remote_candidate(&mut self, cand: &datachannel::IceCandidate) -> anyhow::Result<()> {
-        self.peer_conn.add_remote_candidate(cand)?;
+    pub fn add_remote_candidate(&mut self, cand: IceCandidate) -> anyhow::Result<()> {
+        self.peer_conn.add_remote_candidate(&cand)?;
         Ok(())
     }
 }
@@ -286,11 +295,3 @@ impl datachannel::DataChannelHandler for DataChannelHandler {
 
     fn on_available(&mut self) {}
 }
-
-pub type SessionDescription = datachannel::SessionDescription;
-pub type IceCandidate = datachannel::IceCandidate;
-pub type SdpSession = datachannel::sdp::SdpSession;
-pub type SdpType = datachannel::SdpType;
-pub type RtcConfig = datachannel::RtcConfig;
-pub type DataChannelInit = datachannel::DataChannelInit;
-pub type Reliability = datachannel::Reliability;

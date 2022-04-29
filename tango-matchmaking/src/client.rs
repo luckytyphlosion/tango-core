@@ -28,7 +28,7 @@ where
             protocol::Packet::Start(protocol::Start {
                 protocol_version: protocol::VERSION,
                 session_id: session_id.to_string(),
-                offer_sdp: todo!("local_description.sdp"),
+                offer_sdp: local_description.sdp.to_string(),
             })
             .serialize()?,
         ))
@@ -49,7 +49,11 @@ where
         protocol::Packet::Offer(offer) => {
             log::info!("received an offer, this is the polite side");
 
-            peer_conn.set_local_description(datachannel_wrapper::SdpType::Rollback);
+            peer_conn.set_local_description(datachannel_wrapper::SdpType::Rollback)?;
+            peer_conn.set_remote_description(datachannel_wrapper::SessionDescription {
+                sdp_type: datachannel_wrapper::SdpType::Offer,
+                sdp: datachannel_wrapper::parse_sdp(&offer.sdp.to_string(), false)?,
+            })?;
 
             let local_description = if let Some(
                 datachannel_wrapper::PeerConnectionSignal::SessionDescription(sess_desc),
@@ -75,11 +79,14 @@ where
 
             peer_conn.set_remote_description(datachannel_wrapper::SessionDescription {
                 sdp_type: datachannel_wrapper::SdpType::Answer,
-                sdp: todo!("answer.sdp"),
+                sdp: datachannel_wrapper::parse_sdp(&answer.sdp.to_string(), false)?,
             })?;
         }
-        protocol::Packet::ICECandidate(_) => {
-            anyhow::bail!("unexpected ice candidate");
+        protocol::Packet::ICECandidate(ice_candidate) => {
+            peer_conn.add_remote_candidate(datachannel_wrapper::IceCandidate {
+                candidate: ice_candidate.candidate,
+                mid: ice_candidate.mid,
+            })?;
         }
     }
 
