@@ -45,22 +45,22 @@ impl PeerConnection {
     ) -> anyhow::Result<DataChannel> {
         let (message_tx, message_rx) = tokio::sync::mpsc::channel(1);
         let (open_tx, open_rx) = tokio::sync::oneshot::channel();
-        let error_cell = std::sync::Arc::new(tokio::sync::OnceCell::new());
+        let state = std::sync::Arc::new(tokio::sync::Mutex::new(DataChannelState {
+            open_rx: Some(open_rx),
+            error: None,
+        }));
         let dch = DataChannelHandler {
             message_tx: Some(message_tx),
             open_tx: Some(open_tx),
-            error_cell: error_cell.clone(),
+            state: state.clone(),
         };
         let dc = self
             .peer_conn
             .create_data_channel_ex(label, dch, &dc_init)?;
         Ok(DataChannel {
             dc,
-            state: tokio::sync::Mutex::new(DataChannelState::Pending(open_rx)),
-            receiver: DataChannelReceiver {
-                inner: std::sync::Arc::new(tokio::sync::Mutex::new(message_rx)),
-            },
-            error_cell,
+            message_rx,
+            state,
         })
     }
 
@@ -95,9 +95,8 @@ impl PeerConnection {
 struct PeerConnectionHandler {
     signal_tx: tokio::sync::mpsc::Sender<PeerConnectionSignal>,
     pending_dc_receiver: Option<(
-        DataChannelReceiver,
-        tokio::sync::oneshot::Receiver<()>,
-        std::sync::Arc<tokio::sync::OnceCell<DataChannelError>>,
+        tokio::sync::mpsc::Receiver<Vec<u8>>,
+        std::sync::Arc<tokio::sync::Mutex<DataChannelState>>,
     )>,
     data_channel_tx: tokio::sync::mpsc::Sender<DataChannel>,
 }
@@ -113,19 +112,16 @@ impl datachannel::PeerConnectionHandler for PeerConnectionHandler {
     fn data_channel_handler(&mut self) -> Self::DCH {
         let (message_tx, message_rx) = tokio::sync::mpsc::channel(1);
         let (open_tx, open_rx) = tokio::sync::oneshot::channel();
-        let error_cell = std::sync::Arc::new(tokio::sync::OnceCell::new());
+        let state = std::sync::Arc::new(tokio::sync::Mutex::new(DataChannelState {
+            open_rx: Some(open_rx),
+            error: None,
+        }));
         let dch = DataChannelHandler {
             message_tx: Some(message_tx),
             open_tx: Some(open_tx),
-            error_cell: error_cell.clone(),
+            state: state.clone(),
         };
-        self.pending_dc_receiver = Some((
-            DataChannelReceiver {
-                inner: std::sync::Arc::new(tokio::sync::Mutex::new(message_rx)),
-            },
-            open_rx,
-            error_cell,
-        ));
+        self.pending_dc_receiver = Some((message_rx, state));
         dch
     }
 
@@ -148,79 +144,118 @@ impl datachannel::PeerConnectionHandler for PeerConnectionHandler {
     fn on_signaling_state_change(&mut self, _state: datachannel::SignalingState) {}
 
     fn on_data_channel(&mut self, dc: Box<datachannel::RtcDataChannel<Self::DCH>>) {
-        let (dcr, open_rx, error_cell) = self.pending_dc_receiver.take().unwrap();
+        let (message_rx, state) = self.pending_dc_receiver.take().unwrap();
         let _ = self.data_channel_tx.blocking_send(DataChannel {
             dc,
-            error_cell,
-            receiver: dcr,
-            state: tokio::sync::Mutex::new(DataChannelState::Pending(open_rx)),
+            message_rx,
+            state,
         });
     }
 }
+struct DataChannelState {
+    open_rx: Option<tokio::sync::oneshot::Receiver<()>>,
+    error: Option<Error>,
+}
 
-#[derive(Clone)]
+pub struct DataChannel {
+    state: std::sync::Arc<tokio::sync::Mutex<DataChannelState>>,
+    message_rx: tokio::sync::mpsc::Receiver<Vec<u8>>,
+    dc: Box<datachannel::RtcDataChannel<DataChannelHandler>>,
+}
+
+async fn dc_send(
+    state: &std::sync::Arc<tokio::sync::Mutex<DataChannelState>>,
+    dc: &mut Box<datachannel::RtcDataChannel<DataChannelHandler>>,
+    msg: &[u8],
+) -> Result<(), Error> {
+    let mut state = state.lock().await;
+    if let Some(err) = &state.error {
+        return Err(err.clone());
+    }
+
+    if let Some(open_rx) = state.open_rx.take() {
+        open_rx.await.map_err(|_| Error::Closed)?;
+    }
+
+    dc.send(msg)
+        .map_err(|e| Error::UnderlyingError(format!("{:?}", e)))?;
+    Ok(())
+}
+
+async fn dc_receive(message_rx: &mut tokio::sync::mpsc::Receiver<Vec<u8>>) -> Option<Vec<u8>> {
+    message_rx.recv().await
+}
+
+impl DataChannel {
+    pub async fn send(&mut self, msg: &[u8]) -> Result<(), Error> {
+        dc_send(&self.state, &mut self.dc, msg).await
+    }
+
+    pub async fn receive(&mut self) -> Option<Vec<u8>> {
+        dc_receive(&mut self.message_rx).await
+    }
+
+    pub fn split(self) -> (DataChannelReceiver, DataChannelSender) {
+        return (
+            DataChannelReceiver {
+                message_rx: self.message_rx,
+            },
+            DataChannelSender {
+                state: self.state,
+                dc: self.dc,
+            },
+        );
+    }
+}
+
+pub struct DataChannelSender {
+    state: std::sync::Arc<tokio::sync::Mutex<DataChannelState>>,
+    dc: Box<datachannel::RtcDataChannel<DataChannelHandler>>,
+}
+
+impl DataChannelSender {
+    pub async fn send(&mut self, msg: &[u8]) -> Result<(), Error> {
+        dc_send(&self.state, &mut self.dc, msg).await
+    }
+
+    pub fn unsplit(self, rx: DataChannelReceiver) -> DataChannel {
+        DataChannel {
+            state: self.state,
+            message_rx: rx.message_rx,
+            dc: self.dc,
+        }
+    }
+}
+
 pub struct DataChannelReceiver {
-    inner: std::sync::Arc<tokio::sync::Mutex<tokio::sync::mpsc::Receiver<Vec<u8>>>>,
+    message_rx: tokio::sync::mpsc::Receiver<Vec<u8>>,
 }
 
 impl DataChannelReceiver {
     pub async fn receive(&mut self) -> Option<Vec<u8>> {
-        self.inner.lock().await.recv().await
-    }
-}
-
-enum DataChannelState {
-    Pending(tokio::sync::oneshot::Receiver<()>),
-    Open,
-}
-
-pub struct DataChannel {
-    state: tokio::sync::Mutex<DataChannelState>,
-    error_cell: std::sync::Arc<tokio::sync::OnceCell<DataChannelError>>,
-    receiver: DataChannelReceiver,
-    dc: Box<datachannel::RtcDataChannel<DataChannelHandler>>,
-}
-
-impl DataChannel {
-    pub async fn send(&mut self, msg: &[u8]) -> Result<(), DataChannelError> {
-        if let Some(err) = self.error_cell.get() {
-            return Err(err.clone());
-        }
-
-        let mut state = self.state.lock().await;
-        match &mut *state {
-            DataChannelState::Pending(r) => {
-                r.await.map_err(|_| DataChannelError::Closed)?;
-                *state = DataChannelState::Open;
-            }
-            DataChannelState::Open => {}
-        }
-        self.dc
-            .send(msg)
-            .map_err(|e| DataChannelError::UnderlyingError(format!("{:?}", e)))?;
-        Ok(())
+        dc_receive(&mut self.message_rx).await
     }
 
-    pub fn receiver(&self) -> DataChannelReceiver {
-        self.receiver.clone()
+    pub fn unsplit(self, tx: DataChannelSender) -> DataChannel {
+        tx.unsplit(self)
     }
 }
 
 struct DataChannelHandler {
-    error_cell: std::sync::Arc<tokio::sync::OnceCell<DataChannelError>>,
+    state: std::sync::Arc<tokio::sync::Mutex<DataChannelState>>,
     open_tx: Option<tokio::sync::oneshot::Sender<()>>,
     message_tx: Option<tokio::sync::mpsc::Sender<Vec<u8>>>,
 }
 
 #[derive(Debug, Clone)]
-pub enum DataChannelError {
+pub enum Error {
     Closed,
     UnderlyingError(String),
 }
 
-impl std::error::Error for DataChannelError {}
+impl std::error::Error for Error {}
 
-impl std::fmt::Display for DataChannelError {
+impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:?}", self)
     }
@@ -236,9 +271,7 @@ impl datachannel::DataChannelHandler for DataChannelHandler {
     }
 
     fn on_error(&mut self, err: &str) {
-        let _ = self
-            .error_cell
-            .set(DataChannelError::UnderlyingError(err.to_owned()));
+        let _ = self.state.blocking_lock().error = Some(Error::UnderlyingError(err.to_owned()));
     }
 
     fn on_message(&mut self, msg: &[u8]) {

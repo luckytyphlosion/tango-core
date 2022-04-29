@@ -35,8 +35,8 @@ impl From<std::io::Error> for Error {
     }
 }
 
-impl From<datachannel_wrapper::DataChannelError> for Error {
-    fn from(err: datachannel_wrapper::DataChannelError) -> Self {
+impl From<datachannel_wrapper::Error> for Error {
+    fn from(err: datachannel_wrapper::Error) -> Self {
         Error::Other(err.into())
     }
 }
@@ -84,26 +84,24 @@ pub async fn negotiate(
     let mut peer_conn =
         datachannel_wrapper::PeerConnection::new(datachannel_wrapper::RtcConfig::new(ice_servers))?;
 
-    let mut dc = peer_conn.create_data_channel(
+    let dc = peer_conn.create_data_channel(
         "tango",
-        datachannel_wrapper::DataChannelInit {
-            reliability: datachannel_wrapper::Reliability {
+        datachannel_wrapper::DataChannelInit::default()
+            .reliability(datachannel_wrapper::Reliability {
                 unordered: false,
                 unreliable: false,
                 max_packet_life_time: 0,
                 max_retransmits: 0,
-            },
-            protocol: std::ffi::CString::new("").map_err(|err| anyhow::format_err!("{:?}", err))?,
-            negotiated: true,
-            manual_stream: true,
-            stream: 0,
-        },
+            })
+            .negotiated()
+            .manual_stream()
+            .stream(0),
     )?;
 
     tango_matchmaking::client::connect(&matchmaking_connect_addr, &mut peer_conn, &session_id)
         .await?;
 
-    let mut dcr = dc.receiver();
+    let (mut dc_rx, mut dc_tx) = dc.split();
 
     log::info!(
         "local sdp: {}",
@@ -123,19 +121,20 @@ pub async fn negotiate(
 
     log::info!("our nonce={:?}, commitment={:?}", nonce, commitment);
 
-    dc.send(
-        protocol::Packet::Hello(protocol::Hello {
-            protocol_version: protocol::VERSION,
-            rng_commitment: commitment.to_vec(),
-        })
-        .serialize()
-        .expect("serialize")
-        .as_slice(),
-    )
-    .await?;
+    dc_tx
+        .send(
+            protocol::Packet::Hello(protocol::Hello {
+                protocol_version: protocol::VERSION,
+                rng_commitment: commitment.to_vec(),
+            })
+            .serialize()
+            .expect("serialize")
+            .as_slice(),
+        )
+        .await?;
 
     let hello = match protocol::Packet::deserialize(
-        match dcr.receive().await {
+        match dc_rx.receive().await {
             Some(d) => d,
             None => {
                 return Err(Error::ExpectedHello);
@@ -161,18 +160,19 @@ pub async fn negotiate(
         return Err(Error::ProtocolVersionMismatch);
     }
 
-    dc.send(
-        protocol::Packet::Hola(protocol::Hola {
-            rng_nonce: nonce.to_vec(),
-        })
-        .serialize()
-        .expect("serialize")
-        .as_slice(),
-    )
-    .await?;
+    dc_tx
+        .send(
+            protocol::Packet::Hola(protocol::Hola {
+                rng_nonce: nonce.to_vec(),
+            })
+            .serialize()
+            .expect("serialize")
+            .as_slice(),
+        )
+        .await?;
 
     let hola = match protocol::Packet::deserialize(
-        match dcr.receive().await {
+        match dc_rx.receive().await {
             Some(d) => d,
             None => {
                 return Err(Error::ExpectedHola);
@@ -204,7 +204,7 @@ pub async fn negotiate(
         .collect::<Vec<u8>>();
 
     Ok(Negotiation {
-        dc,
+        dc: dc_rx.unsplit(dc_tx),
         peer_conn,
         rng: rand_pcg::Mcg128Xsl64::from_seed(seed.try_into().expect("rng seed")),
     })
