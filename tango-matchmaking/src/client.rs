@@ -5,7 +5,7 @@ use futures_util::TryStreamExt;
 pub async fn connect(
     addr: &str,
     peer_conn: &mut datachannel_wrapper::PeerConnection,
-    mut signal_receiver: tokio::sync::mpsc::Receiver<datachannel_wrapper::PeerConnectionSignal>,
+    mut signal_rx: tokio::sync::mpsc::Receiver<datachannel_wrapper::PeerConnectionSignal>,
     session_id: &str,
 ) -> Result<(), anyhow::Error>
 where
@@ -17,7 +17,7 @@ where
     loop {
         if let Some(datachannel_wrapper::PeerConnectionSignal::GatheringStateChange(
             datachannel_wrapper::GatheringState::Complete,
-        )) = signal_receiver.recv().await
+        )) = signal_rx.recv().await
         {
             break;
         }
@@ -38,7 +38,7 @@ where
 
     loop {
         tokio::select! {
-            signal_msg = signal_receiver.recv() => {
+            signal_msg = signal_rx.recv() => {
                 let cand = if let Some(datachannel_wrapper::PeerConnectionSignal::IceCandidate(cand)) = signal_msg {
                     cand
                 } else {
@@ -111,6 +111,30 @@ where
     }
 
     stream.close(None).await?;
+
+    loop {
+        match signal_rx.recv().await {
+            Some(signal) => match signal {
+                datachannel_wrapper::PeerConnectionSignal::ConnectionStateChange(c) => match c {
+                    datachannel_wrapper::ConnectionState::Connected => {
+                        break;
+                    }
+                    datachannel_wrapper::ConnectionState::Disconnected => {
+                        anyhow::bail!("peer connection unexpectedly disconnected");
+                    }
+                    datachannel_wrapper::ConnectionState::Failed => {
+                        anyhow::bail!("peer connection failed");
+                    }
+                    datachannel_wrapper::ConnectionState::Closed => {
+                        anyhow::bail!("peer connection unexpectedly closed");
+                    }
+                    _ => {}
+                },
+                _ => {}
+            },
+            None => unreachable!(),
+        }
+    }
 
     Ok(())
 }

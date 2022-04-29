@@ -22,7 +22,7 @@ impl PeerConnection {
         let (signal_tx, signal_rx) = tokio::sync::mpsc::channel(1);
         let (data_channel_tx, data_channel_rx) = tokio::sync::mpsc::channel(1);
         let pch = PeerConnectionHandler {
-            signal_tx,
+            signal_tx: Some(signal_tx),
             pending_dc_receiver: None,
             data_channel_tx,
         };
@@ -91,7 +91,7 @@ impl PeerConnection {
 }
 
 struct PeerConnectionHandler {
-    signal_tx: tokio::sync::mpsc::Sender<PeerConnectionSignal>,
+    signal_tx: Option<tokio::sync::mpsc::Sender<PeerConnectionSignal>>,
     pending_dc_receiver: Option<(
         tokio::sync::mpsc::Receiver<Vec<u8>>,
         std::sync::Arc<tokio::sync::Mutex<DataChannelState>>,
@@ -128,34 +128,53 @@ impl datachannel::PeerConnectionHandler for PeerConnectionHandler {
     }
 
     fn on_description(&mut self, sess_desc: SessionDescription) {
-        let _ = self
-            .signal_tx
-            .blocking_send(PeerConnectionSignal::SessionDescription(sess_desc));
+        let signal_tx = if let Some(signal_tx) = self.signal_tx.as_mut() {
+            signal_tx
+        } else {
+            return;
+        };
+
+        let _ = signal_tx.blocking_send(PeerConnectionSignal::SessionDescription(sess_desc));
     }
 
     fn on_candidate(&mut self, cand: IceCandidate) {
-        let _ = self
-            .signal_tx
-            .blocking_send(PeerConnectionSignal::IceCandidate(cand));
+        let signal_tx = if let Some(signal_tx) = self.signal_tx.as_mut() {
+            signal_tx
+        } else {
+            return;
+        };
+
+        let _ = signal_tx.blocking_send(PeerConnectionSignal::IceCandidate(cand));
     }
 
     fn on_connection_state_change(&mut self, state: ConnectionState) {
-        // This is dangerous, because there is no guarantee what thread this runs on!
-        // let _ = self
-        //     .signal_tx
-        //     .blocking_send(PeerConnectionSignal::ConnectionStateChange(state));
+        let signal_tx = if let Some(signal_tx) = self.signal_tx.as_mut() {
+            signal_tx
+        } else {
+            return;
+        };
+
+        let _ = signal_tx.blocking_send(PeerConnectionSignal::ConnectionStateChange(state));
     }
 
     fn on_gathering_state_change(&mut self, state: GatheringState) {
-        let _ = self
-            .signal_tx
-            .blocking_send(PeerConnectionSignal::GatheringStateChange(state));
+        let signal_tx = if let Some(signal_tx) = self.signal_tx.as_mut() {
+            signal_tx
+        } else {
+            return;
+        };
+
+        let _ = signal_tx.blocking_send(PeerConnectionSignal::GatheringStateChange(state));
     }
 
     fn on_signaling_state_change(&mut self, state: SignalingState) {
-        let _ = self
-            .signal_tx
-            .blocking_send(PeerConnectionSignal::SignalingStateChange(state));
+        let signal_tx = if let Some(signal_tx) = self.signal_tx.as_mut() {
+            signal_tx
+        } else {
+            return;
+        };
+
+        let _ = signal_tx.blocking_send(PeerConnectionSignal::SignalingStateChange(state));
     }
 
     fn on_data_channel(&mut self, dc: Box<datachannel::RtcDataChannel<Self::DCH>>) {
