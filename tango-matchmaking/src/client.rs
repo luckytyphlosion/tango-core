@@ -5,6 +5,7 @@ use futures_util::TryStreamExt;
 pub async fn connect(
     addr: &str,
     peer_conn: &mut datachannel_wrapper::PeerConnection,
+    mut signal_receiver: tokio::sync::mpsc::Receiver<datachannel_wrapper::PeerConnectionSignal>,
     session_id: &str,
 ) -> Result<(), anyhow::Error>
 where
@@ -13,7 +14,6 @@ where
 
     log::info!("negotiation started");
 
-    let signal_receiver = peer_conn.signal_receiver();
     loop {
         if let Some(datachannel_wrapper::PeerConnectionSignal::GatheringStateChange(
             datachannel_wrapper::GatheringState::Complete,

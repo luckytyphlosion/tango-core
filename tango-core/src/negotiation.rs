@@ -81,7 +81,7 @@ pub async fn negotiate(
         .send_notification(ipc::Notification::State(ipc::State::Waiting))
         .await?;
 
-    let mut peer_conn =
+    let (mut peer_conn, signal_receiver) =
         datachannel_wrapper::PeerConnection::new(datachannel_wrapper::RtcConfig::new(ice_servers))?;
 
     let dc = peer_conn.create_data_channel(
@@ -98,8 +98,13 @@ pub async fn negotiate(
             .stream(0),
     )?;
 
-    tango_matchmaking::client::connect(&matchmaking_connect_addr, &mut peer_conn, &session_id)
-        .await?;
+    tango_matchmaking::client::connect(
+        &matchmaking_connect_addr,
+        &mut peer_conn,
+        signal_receiver,
+        &session_id,
+    )
+    .await?;
 
     let (mut dc_rx, mut dc_tx) = dc.split();
 
