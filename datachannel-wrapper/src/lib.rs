@@ -18,7 +18,9 @@ pub struct PeerConnection {
 
 #[derive(Clone)]
 pub struct PeerConnectionSignalReceiver {
-    inner: std::sync::Arc<tokio::sync::Mutex<tokio::sync::mpsc::Receiver<PeerConnectionSignal>>>,
+    inner: std::sync::Arc<
+        tokio::sync::Mutex<tokio::sync::mpsc::UnboundedReceiver<PeerConnectionSignal>>,
+    >,
 }
 
 impl PeerConnectionSignalReceiver {
@@ -29,7 +31,7 @@ impl PeerConnectionSignalReceiver {
 
 impl PeerConnection {
     pub fn new(config: RtcConfig) -> anyhow::Result<Self> {
-        let (signal_tx, signal_rx) = tokio::sync::mpsc::channel(1);
+        let (signal_tx, signal_rx) = tokio::sync::mpsc::unbounded_channel();
         let (data_channel_tx, data_channel_rx) = tokio::sync::mpsc::channel(1);
         let pch = PeerConnectionHandler {
             signal_tx,
@@ -105,7 +107,7 @@ impl PeerConnection {
 }
 
 struct PeerConnectionHandler {
-    signal_tx: tokio::sync::mpsc::Sender<PeerConnectionSignal>,
+    signal_tx: tokio::sync::mpsc::UnboundedSender<PeerConnectionSignal>,
     pending_dc_receiver: Option<(
         tokio::sync::mpsc::Receiver<Vec<u8>>,
         std::sync::Arc<tokio::sync::Mutex<DataChannelState>>,
@@ -144,33 +146,31 @@ impl datachannel::PeerConnectionHandler for PeerConnectionHandler {
     fn on_description(&mut self, sess_desc: SessionDescription) {
         let _ = self
             .signal_tx
-            .blocking_send(PeerConnectionSignal::SessionDescription(sess_desc));
+            .send(PeerConnectionSignal::SessionDescription(sess_desc));
     }
 
     fn on_candidate(&mut self, cand: IceCandidate) {
         let _ = self
             .signal_tx
-            .blocking_send(PeerConnectionSignal::IceCandidate(cand));
+            .send(PeerConnectionSignal::IceCandidate(cand));
     }
 
-    fn on_connection_state_change(&mut self, _state: ConnectionState) {
-        // This callback can be called from any thread, including with the async context!
-        // Using blocking_send here is unsafe, so we need to figure out a better way to do this.
-        // let _ = self
-        //     .signal_tx
-        //     .blocking_send(PeerConnectionSignal::ConnectionStateChange(state));
+    fn on_connection_state_change(&mut self, state: ConnectionState) {
+        let _ = self
+            .signal_tx
+            .send(PeerConnectionSignal::ConnectionStateChange(state));
     }
 
     fn on_gathering_state_change(&mut self, state: GatheringState) {
         let _ = self
             .signal_tx
-            .blocking_send(PeerConnectionSignal::GatheringStateChange(state));
+            .send(PeerConnectionSignal::GatheringStateChange(state));
     }
 
     fn on_signaling_state_change(&mut self, state: SignalingState) {
         let _ = self
             .signal_tx
-            .blocking_send(PeerConnectionSignal::SignalingStateChange(state));
+            .send(PeerConnectionSignal::SignalingStateChange(state));
     }
 
     fn on_data_channel(&mut self, dc: Box<datachannel::RtcDataChannel<Self::DCH>>) {
@@ -293,6 +293,7 @@ impl std::fmt::Display for Error {
 
 impl datachannel::DataChannelHandler for DataChannelHandler {
     fn on_open(&mut self) {
+        log::info!("data channel opened");
         let _ = self.open_tx.take().unwrap().send(());
     }
 
