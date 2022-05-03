@@ -13,4 +13,5 @@ pub mod ipc;
 pub mod negotiation;
 pub mod protocol;
 pub mod replay;
+pub mod shadow;
 pub mod tps;

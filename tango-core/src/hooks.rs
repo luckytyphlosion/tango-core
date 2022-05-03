@@ -20,6 +20,8 @@ pub trait Hooks {
         ff_state: fastforwarder::State,
     ) -> Vec<(u32, Box<dyn FnMut(mgba::core::CoreMutRef)>)>;
 
+    fn shadow_traps(&self) -> Vec<(u32, Box<dyn FnMut(mgba::core::CoreMutRef)>)>;
+
     fn primary_traps(
         &self,
         handle: tokio::runtime::Handle,

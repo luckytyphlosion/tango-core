@@ -8,6 +8,7 @@ use crate::hooks;
 use crate::input;
 use crate::protocol;
 use crate::replay;
+use crate::shadow;
 
 #[derive(Clone, Debug)]
 pub struct Settings {
@@ -47,6 +48,7 @@ impl RoundState {
 }
 
 pub struct Match {
+    shadow: tokio::sync::Mutex<shadow::Shadow>,
     audio_supported_config: cpal::SupportedStreamConfig,
     rom_path: std::path::PathBuf,
     hooks: &'static Box<dyn hooks::Hooks + Send + Sync>,
@@ -144,11 +146,12 @@ impl Match {
         is_offerer: bool,
         primary_thread_handle: mgba::thread::Handle,
         settings: Settings,
-    ) -> Self {
+    ) -> anyhow::Result<Self> {
         let (remote_init_sender, remote_init_receiver) = tokio::sync::mpsc::channel(1);
         let (dc_rx, dc_tx) = dc.split();
         let did_polite_win_last_round = rng.gen::<bool>();
-        Self {
+        Ok(Self {
+            shadow: tokio::sync::Mutex::new(shadow::Shadow::new(&rom_path, hooks, is_offerer)?),
             audio_supported_config,
             rom_path,
             hooks,
@@ -167,7 +170,7 @@ impl Match {
             remote_init_receiver: tokio::sync::Mutex::new(remote_init_receiver),
             audio_mux,
             primary_thread_handle,
-        }
+        })
     }
 
     pub async fn run(&self) -> anyhow::Result<()> {

@@ -536,6 +536,10 @@ impl hooks::Hooks for BN6 {
         ]
     }
 
+    fn shadow_traps(&self) -> Vec<(u32, Box<dyn FnMut(mgba::core::CoreMutRef)>)> {
+        vec![]
+    }
+
     fn fastforwarder_traps(
         &self,
         ff_state: fastforwarder::State,
